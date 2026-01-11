@@ -69,7 +69,7 @@ def build_config():
                     raise RuntimeError("Reality inbound requires reality_short_id")
                 dest = inbound.reality_dest or f"{inbound.sni}:443"
                 inbound_dict["streamSettings"]["realitySettings"] = {
-                    "show": "auto",
+                    "show": False,
                     "dest": dest,
                     "xver": 0,
                     "serverNames": [inbound.sni],

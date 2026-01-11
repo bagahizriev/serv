@@ -2,19 +2,19 @@
 set -euo pipefail
 
 # --- Настройки (отредактируй под себя) ---
-REPO_URL="https://github.com/REPLACE_ME/REPLACE_ME.git"
+REPO_URL="https://github.com/bagahizriev/serv.git"
 REPO_DIR="/opt/xray-project"
 BRANCH="main"
 
-NODE_ADDRESS="REPLACE_WITH_YOUR_VPS_IP_OR_DOMAIN"   # то, что будет в VLESS URI (host)
-API_KEY="REPLACE_WITH_STRONG_KEY"
+NODE_ADDRESS="109.120.140.226"   # то, что будет в VLESS URI (host)
+API_KEY="NUDOXVjvaobU9CmSEAN9leNYT6mu31Rb"
 
 VPN_PORT="443"                 # внешний порт ноды для клиентов
 API_PORT="8585"                 # порт API ноды
-EXPOSE_API_PUBLIC="false"       # true -> откроет API наружу; false -> только localhost
+EXPOSE_API_PUBLIC="true"       # true -> откроет API наружу; false -> только localhost
 
 ENABLE_UFW="true"              # настроить firewall через ufw
-PANEL_IP_ALLOW=""              # если EXPOSE_API_PUBLIC=true: можно указать IP панели (тогда API будет доступно только с него)
+API_ALLOW_IPS=("46.32.186.181" "146.158.124.131")  # если EXPOSE_API_PUBLIC=true: доступ к API будет только с этих IP
 
 IMAGE_NAME="xray-node"
 CONTAINER_NAME="xray-node"
@@ -82,8 +82,10 @@ if [[ "$ENABLE_UFW" == "true" ]]; then
   ufw allow "${VPN_PORT}/tcp"
 
   if [[ "$EXPOSE_API_PUBLIC" == "true" ]]; then
-    if [[ -n "$PANEL_IP_ALLOW" ]]; then
-      ufw allow from "$PANEL_IP_ALLOW" to any port "$API_PORT" proto tcp
+    if [[ ${#API_ALLOW_IPS[@]} -gt 0 ]]; then
+      for ip in "${API_ALLOW_IPS[@]}"; do
+        ufw allow from "$ip" to any port "$API_PORT" proto tcp
+      done
     else
       ufw allow "${API_PORT}/tcp"
     fi

@@ -21,6 +21,10 @@ fi
 if [ ! -f /var/lib/xray-api/xray.db ]; then
   cd /app
   /app/venv/bin/python -c 'from sqlalchemy import create_engine; from xray_api.models import ensure_schema; import os; db=os.environ.get("XRAY_API_DB_PATH","/var/lib/xray-api/xray.db"); os.makedirs(os.path.dirname(db), exist_ok=True); engine=create_engine(f"sqlite:///{db}", connect_args={"check_same_thread": False}); ensure_schema(engine)'
+  chown xrayapi:xrayapi /var/lib/xray-api/xray.db || true
 fi
+
+# На всякий случай: если БД уже существовала (volume), но принадлежит root, исправим права
+chown xrayapi:xrayapi /var/lib/xray-api/xray.db || true
 
 exec "$@"
