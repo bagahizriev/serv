@@ -1,51 +1,47 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# --- Настройки (отредактируй под себя) ---
+# ================== БАЗОВЫЕ НАСТРОЙКИ ==================
 REPO_URL="https://github.com/bagahizriev/serv.git"
 REPO_DIR="/opt/xray-project"
 BRANCH="main"
 
-NODE_ADDRESS="109.120.140.226"   # то, что будет в VLESS URI (host)
-API_KEY="NUDOXVjvaobU9CmSEAN9leNYT6mu31Rb"
-
-VPN_PORT="443"                 # внешний порт ноды для клиентов
+VPN_PORT="443"                  # внешний порт ноды для клиентов
 API_PORT="8585"                 # порт API ноды
-EXPOSE_API_PUBLIC="true"       # true -> откроет API наружу; false -> только localhost
+EXPOSE_API_PUBLIC="true"        # true -> API доступен извне
+ENABLE_UFW="true"               # включить firewall (ufw)
 
-ENABLE_UFW="true"              # настроить firewall через ufw
-API_ALLOW_IPS=("46.32.186.181" "146.158.124.131")  # если EXPOSE_API_PUBLIC=true: доступ к API будет только с этих IP
+# IP, которым разрешён доступ к API (если API открыт публично)
+API_ALLOW_IPS=("46.32.186.181" "146.158.124.131")
 
 IMAGE_NAME="xray-node"
 CONTAINER_NAME="xray-node"
 
-# --- Проверки ---
+# ================== АВТОНАСТРОЙКИ ==================
+echo "[*] Определение публичного IP..."
+NODE_ADDRESS="$(curl -fsSL https://api.ipify.org || curl -fsSL https://ifconfig.me)"
+
+if [[ -z "$NODE_ADDRESS" ]]; then
+  echo "Не удалось определить публичный IP"
+  exit 1
+fi
+
+echo "[*] Генерация API ключа..."
+API_KEY="$(openssl rand -base64 32 | tr -d '\n')"
+
+export DEBIAN_FRONTEND=noninteractive
+
+# ================== ПРОВЕРКИ ==================
 if [[ "$(id -u)" -ne 0 ]]; then
   echo "Запусти скрипт от root (sudo)."
   exit 1
 fi
 
-if [[ "$REPO_URL" == *"REPLACE_ME"* ]]; then
-  echo "Сначала укажи REPO_URL в начале файла."
-  exit 1
-fi
-
-if [[ "$NODE_ADDRESS" == *"REPLACE_WITH"* ]]; then
-  echo "Сначала укажи NODE_ADDRESS (IP/домен VPS) в начале файла."
-  exit 1
-fi
-
-if [[ "$API_KEY" == *"REPLACE_WITH"* ]]; then
-  echo "Сначала укажи API_KEY в начале файла."
-  exit 1
-fi
-
-export DEBIAN_FRONTEND=noninteractive
-
-echo "[1/6] Обновление системы и пакетов..."
+# ================== УСТАНОВКА ==================
+echo "[1/6] Обновление системы..."
 apt-get update -y
 apt-get upgrade -y
-apt-get install -y --no-install-recommends git ca-certificates curl
+apt-get install -y --no-install-recommends git ca-certificates curl openssl
 
 if [[ "$ENABLE_UFW" == "true" ]]; then
   apt-get install -y --no-install-recommends ufw
@@ -56,11 +52,12 @@ if ! command -v docker >/dev/null 2>&1; then
   curl -fsSL https://get.docker.com | sh
 fi
 
-# Не критично, но удобно
 systemctl enable --now docker >/dev/null 2>&1 || true
 
-echo "[3/6] Клонирование/обновление репозитория..."
+# ================== РЕПОЗИТОРИЙ ==================
+echo "[3/6] Клонирование / обновление репозитория..."
 mkdir -p "$(dirname "$REPO_DIR")"
+
 if [[ -d "$REPO_DIR/.git" ]]; then
   git -C "$REPO_DIR" fetch --all
   git -C "$REPO_DIR" checkout "$BRANCH"
@@ -69,16 +66,14 @@ else
   git clone --branch "$BRANCH" "$REPO_URL" "$REPO_DIR"
 fi
 
+# ================== FIREWALL ==================
 if [[ "$ENABLE_UFW" == "true" ]]; then
-  echo "[4/6] Настройка firewall (ufw)..."
+  echo "[4/6] Настройка UFW..."
   ufw --force reset
   ufw default deny incoming
   ufw default allow outgoing
 
-  # SSH (чтобы не отрезать себе доступ)
   ufw allow 22/tcp
-
-  # VPN порт
   ufw allow "${VPN_PORT}/tcp"
 
   if [[ "$EXPOSE_API_PUBLIC" == "true" ]]; then
@@ -90,14 +85,14 @@ if [[ "$ENABLE_UFW" == "true" ]]; then
       ufw allow "${API_PORT}/tcp"
     fi
   else
-    # API наружу не открываем
     ufw deny "${API_PORT}/tcp" || true
   fi
 
   ufw --force enable
 fi
 
-echo "[5/6] Сборка Docker-образа ноды..."
+# ================== DOCKER ==================
+echo "[5/6] Сборка Docker образа..."
 docker build -t "$IMAGE_NAME" "$REPO_DIR/node"
 
 echo "[6/6] Запуск контейнера..."
@@ -116,5 +111,16 @@ docker run -d --name "$CONTAINER_NAME" \
   $( [[ "$EXPOSE_API_PUBLIC" == "true" ]] && echo "-p ${API_PORT}:${API_PORT}" || echo "-p 127.0.0.1:${API_PORT}:${API_PORT}" ) \
   "$IMAGE_NAME"
 
-echo "Готово. Проверка API (локально на сервере):"
-echo "  curl -H 'X-API-Key: *****' http://127.0.0.1:${API_PORT}/inbounds"
+# ================== ВЫВОД ДАННЫХ ==================
+echo
+echo "======================================"
+echo "   XRAY NODE УСПЕШНО УСТАНОВЛЕНА"
+echo "======================================"
+echo "IP / HOST:        ${NODE_ADDRESS}"
+echo "VPN PORT:         ${VPN_PORT}"
+echo "API PORT:         ${API_PORT}"
+echo "API KEY:          ${API_KEY}"
+echo
+echo "Проверка API:"
+echo "curl -H \"X-API-Key: ${API_KEY}\" http://127.0.0.1:${API_PORT}/inbounds"
+echo "======================================"
