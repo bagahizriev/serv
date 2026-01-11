@@ -1,11 +1,10 @@
 #!/bin/sh
 set -eu
 
-: "${XRAY_API_KEY:?XRAY_API_KEY is required}"
+: "${XRAY_NODE_KEY:?XRAY_NODE_KEY is required}"
 
-mkdir -p /etc/xray /var/lib/xray-api
+mkdir -p /etc/xray
 
-chown -R xrayapi:xrayapi /var/lib/xray-api
 chown -R xrayapi:xrayapi /etc/xray
 
 if [ ! -f /etc/xray/config.json ]; then
@@ -17,14 +16,5 @@ if [ ! -f /etc/xray/config.json ]; then
 }
 EOF
 fi
-
-if [ ! -f /var/lib/xray-api/xray.db ]; then
-  cd /app
-  /app/venv/bin/python -c 'from sqlalchemy import create_engine; from xray_api.models import ensure_schema; import os; db=os.environ.get("XRAY_API_DB_PATH","/var/lib/xray-api/xray.db"); os.makedirs(os.path.dirname(db), exist_ok=True); engine=create_engine(f"sqlite:///{db}", connect_args={"check_same_thread": False}); ensure_schema(engine)'
-  chown xrayapi:xrayapi /var/lib/xray-api/xray.db || true
-fi
-
-# На всякий случай: если БД уже существовала (volume), но принадлежит root, исправим права
-chown xrayapi:xrayapi /var/lib/xray-api/xray.db || true
 
 exec "$@"

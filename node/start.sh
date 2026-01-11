@@ -27,7 +27,17 @@ if [[ -z "$NODE_ADDRESS" ]]; then
 fi
 
 echo "[*] Генерация API ключа..."
-API_KEY="$(openssl rand -base64 32 | tr -d '\n')"
+NODE_KEY_FILE="/etc/xray-node/node_key"
+mkdir -p "$(dirname "$NODE_KEY_FILE")"
+
+if [[ -f "$NODE_KEY_FILE" ]]; then
+  NODE_KEY="$(cat "$NODE_KEY_FILE")"
+else
+  NODE_KEY="$(openssl rand -base64 32 | tr -d '\n')"
+  umask 077
+  printf "%s" "$NODE_KEY" > "$NODE_KEY_FILE"
+  chmod 600 "$NODE_KEY_FILE" || true
+fi
 
 export DEBIAN_FRONTEND=noninteractive
 
@@ -98,14 +108,13 @@ docker build -t "$IMAGE_NAME" "$REPO_DIR/node"
 echo "[6/6] Запуск контейнера..."
 docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 
-docker_volume_db="${CONTAINER_NAME}_db"
 docker_volume_cfg="${CONTAINER_NAME}_cfg"
 
+PANEL_ALLOW_IPS_CSV="$(IFS=,; echo "${API_ALLOW_IPS[*]}")"
+
 docker run -d --name "$CONTAINER_NAME" \
-  -e XRAY_API_KEY="$API_KEY" \
-  -e XRAY_APPLY_DEBOUNCE_SECONDS="1.5" \
-  -e XRAY_NODE_ADDRESS="$NODE_ADDRESS" \
-  -v "$docker_volume_db":/var/lib/xray-api \
+  -e XRAY_NODE_KEY="$NODE_KEY" \
+  -e XRAY_PANEL_ALLOW_IPS="$PANEL_ALLOW_IPS_CSV" \
   -v "$docker_volume_cfg":/etc/xray \
   -p "${VPN_PORT}:${VPN_PORT}" \
   $( [[ "$EXPOSE_API_PUBLIC" == "true" ]] && echo "-p ${API_PORT}:${API_PORT}" || echo "-p 127.0.0.1:${API_PORT}:${API_PORT}" ) \
@@ -119,8 +128,9 @@ echo "======================================"
 echo "IP / HOST:        ${NODE_ADDRESS}"
 echo "VPN PORT:         ${VPN_PORT}"
 echo "API PORT:         ${API_PORT}"
-echo "API KEY:          ${API_KEY}"
+echo "NODE KEY:         ${NODE_KEY}"
+echo "NODE KEY FILE:    ${NODE_KEY_FILE}"
 echo
-echo "Проверка API:"
-echo "curl -H \"X-API-Key: ${API_KEY}\" http://127.0.0.1:${API_PORT}/inbounds"
+echo "Проверка агента:"
+echo "curl http://127.0.0.1:${API_PORT}/health"
 echo "======================================"

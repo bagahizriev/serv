@@ -11,9 +11,8 @@ docker build -t xray-node .
 ```bash
 docker run -d --name xray-node \
   -p 8585:8585 \
-  -e XRAY_API_KEY=change_me \
-  -e XRAY_APPLY_DEBOUNCE_SECONDS=1.5 \
-  -v xray_node_db:/var/lib/xray-api \
+  -e XRAY_NODE_KEY=change_me \
+  -e XRAY_PANEL_ALLOW_IPS=46.32.186.181,146.158.124.131 \
   -v xray_node_config:/etc/xray \
   xray-node
 ```
@@ -21,27 +20,23 @@ docker run -d --name xray-node \
 ### Проверка
 
 ```bash
-curl -H 'X-API-Key: change_me' http://localhost:8585/inbounds
+curl http://localhost:8585/health
 ```
 
-### Reality пример
+### Применить config.json (делает панель)
 
-Создать inbound (Reality):
+Агент принимает полный config Xray и применяет его:
 
-```bash
-curl -X POST 'http://localhost:8585/inbounds?name=reality1&security=reality&protocol=vless&network=tcp&port=443&sni=vk.com' \
-  -H 'X-API-Key: change_me'
-```
+1. пишет во временный файл
+2. проверяет `xray -test`
+3. атомарно заменяет `/etc/xray/config.json`
+4. перезапускает Xray через supervisor
 
-Создать клиента:
-
-```bash
-curl -X POST 'http://localhost:8585/clients?username=user1&inbound_id=1' \
-  -H 'X-API-Key: change_me'
-```
-
-Получить VLESS URI:
+Пример ручного запроса (для отладки):
 
 ```bash
-curl -H 'X-API-Key: change_me' http://localhost:8585/clients/1/vless
+curl -X POST http://localhost:8585/apply-config \
+  -H 'X-Node-Key: change_me' \
+  -H 'Content-Type: application/json' \
+  -d '{"config":{"log":{"loglevel":"warning"},"inbounds":[],"outbounds":[{"protocol":"freedom"}]}}'
 ```

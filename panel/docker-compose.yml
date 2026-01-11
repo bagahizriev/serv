@@ -1,0 +1,23 @@
+services:
+    db:
+        image: postgres:16
+        environment:
+            POSTGRES_DB: xray_panel
+            POSTGRES_USER: xray_panel
+            POSTGRES_PASSWORD: xray_panel
+        volumes:
+            - panel_db:/var/lib/postgresql/data
+        ports:
+            - "5432:5432"
+
+    panel:
+        build: .
+        environment:
+            DATABASE_URL: postgresql+psycopg2://xray_panel:xray_panel@db:5432/xray_panel
+        depends_on:
+            - db
+        ports:
+            - "8000:8000"
+
+volumes:
+    panel_db:

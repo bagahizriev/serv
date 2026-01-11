@@ -24,8 +24,8 @@ RUN curl -fsSL -o /tmp/xray.zip "https://github.com/XTLS/Xray-core/releases/down
     && rm -rf /tmp/xray /tmp/xray.zip
 
 RUN useradd -r -s /usr/sbin/nologin xrayapi \
-    && mkdir -p /app /etc/xray /var/lib/xray-api \
-    && chown -R xrayapi:xrayapi /app /var/lib/xray-api
+    && mkdir -p /app /etc/xray \
+    && chown -R xrayapi:xrayapi /app
 
 WORKDIR /app
 
@@ -33,15 +33,16 @@ COPY requirements.txt /app/requirements.txt
 RUN python3 -m venv /app/venv \
     && /app/venv/bin/pip install --no-cache-dir -r /app/requirements.txt
 
-COPY xray_api /app/xray_api
+COPY xray_agent /app/xray_agent
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
 EXPOSE 8585
 
-ENV XRAY_API_DB_PATH=/var/lib/xray-api/xray.db \
-    XRAY_CONFIG_PATH=/etc/xray/config.json
+ENV XRAY_CONFIG_PATH=/etc/xray/config.json \
+    XRAY_NODE_KEY= \
+    XRAY_PANEL_ALLOW_IPS=
 
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["/usr/bin/supervisord", "-n", "-c", "/etc/supervisor/supervisord.conf"]
