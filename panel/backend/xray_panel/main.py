@@ -31,7 +31,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=False,
-    allow_methods=["*"] ,
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
@@ -313,7 +313,12 @@ def push_node_config(node_id: int, db: Session = Depends(get_db)):
             r = client.post(url, json={"config": config}, headers=headers)
         if r.status_code >= 400:
             raise HTTPException(status_code=400, detail=f"Node error: {r.status_code} {r.text}")
-        return {"status": "pushed", "node_response": r.json() if r.headers.get("content-type", "").startswith("application/json") else r.text}
+        return {
+            "status": "pushed",
+            "node_response": r.json()
+            if r.headers.get("content-type", "").startswith("application/json")
+            else r.text,
+        }
     except HTTPException:
         raise
     except Exception as e:
