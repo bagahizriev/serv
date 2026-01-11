@@ -1,9 +1,13 @@
 import json
 import subprocess
 import os
+import tempfile
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine
-from models import Base, Inbound, Client
+from .models import Base, Inbound, Client
+
+SUPERVISOR_SERVER_URL = os.environ.get("SUPERVISOR_SERVER_URL", "unix:///tmp/supervisor.sock")
+XRAY_BIN = os.environ.get("XRAY_BIN", "/usr/local/bin/xray")
 
 # --- Настройка базы ---
 DB_PATH = os.environ.get("XRAY_API_DB_PATH", "/var/lib/xray-api/xray.db")
@@ -45,7 +49,6 @@ def build_config():
                 }
             }
 
-            # TLS или Reality
             if inbound.security.lower() == "tls":
                 inbound_dict["streamSettings"]["security"] = "tls"
                 inbound_dict["streamSettings"]["tlsSettings"] = {
@@ -58,34 +61,54 @@ def build_config():
                 }
             elif inbound.security.lower() == "reality":
                 inbound_dict["streamSettings"]["security"] = "reality"
+                if not inbound.sni:
+                    raise RuntimeError("Reality inbound requires sni")
+                if not inbound.reality_private_key:
+                    raise RuntimeError("Reality inbound requires reality_private_key")
+                if not inbound.reality_short_id:
+                    raise RuntimeError("Reality inbound requires reality_short_id")
+                dest = inbound.reality_dest or f"{inbound.sni}:443"
                 inbound_dict["streamSettings"]["realitySettings"] = {
                     "show": "auto",
-                    "dest": inbound.sni or "example.com",
-                    "xver": 0
+                    "dest": dest,
+                    "xver": 0,
+                    "serverNames": [inbound.sni],
+                    "privateKey": inbound.reality_private_key,
+                    "shortIds": [inbound.reality_short_id],
+                    "spiderX": "/"
                 }
 
-            # Sniffing по умолчанию
             inbound_dict["sniffing"] = {"enabled": True, "destOverride": ["http", "tls"]}
 
             config["inbounds"].append(inbound_dict)
 
-        # Запись в файл
-        with open(XRAY_CONFIG_PATH, "w") as f:
-            json.dump(config, f, indent=2)
-        print(f"[+] config.json сгенерирован по данным базы в {XRAY_CONFIG_PATH}")
+        target_dir = os.path.dirname(XRAY_CONFIG_PATH) or "."
+        with tempfile.NamedTemporaryFile("w", delete=False, dir=target_dir, prefix="config.", suffix=".json") as tmp:
+            tmp_path = tmp.name
+            json.dump(config, tmp, indent=2)
+
+        try:
+            subprocess.run([XRAY_BIN, "-test", "-config", tmp_path], check=True)
+            os.replace(tmp_path, XRAY_CONFIG_PATH)
+            print(f"[+] config.json сгенерирован по данным базы в {XRAY_CONFIG_PATH}")
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
 
     finally:
         db.close()
 
 # --- Функция перезапуска Xray ---
 def restart_xray():
-    subprocess.run(["supervisorctl", "restart", "xray"], check=True)
+    subprocess.run(["supervisorctl", "-s", SUPERVISOR_SERVER_URL, "restart", "xray"], check=True)
     print("[+] Xray перезапущен")
 
 def apply_config():
     build_config()
-    restart_xray()
+    try:
+        restart_xray()
+    except subprocess.CalledProcessError as e:
+        raise RuntimeError(f"Xray restart failed: {e}")
 
-# --- Основная функция ---
 if __name__ == "__main__":
     apply_config()

@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from models import Inbound, Client
+from .models import Inbound, Client
 import uuid as py_uuid
 
 # --- Inbounds ---
@@ -9,8 +9,8 @@ def get_inbounds(db: Session):
 def get_inbound(db: Session, inbound_id: int):
     return db.query(Inbound).filter(Inbound.id == inbound_id).first()
 
-def create_inbound(db: Session, name: str, port: int=443, protocol="vless", network="tcp", security="tls", sni=""):
-    inbound = Inbound(name=name, port=port, protocol=protocol, network=network, security=security, sni=sni)
+def create_inbound(db: Session, name: str, port: int=443, protocol="vless", network="tcp", security="tls", sni="", **kwargs):
+    inbound = Inbound(name=name, port=port, protocol=protocol, network=network, security=security, sni=sni, **kwargs)
     db.add(inbound)
     db.commit()
     db.refresh(inbound)
@@ -18,6 +18,8 @@ def create_inbound(db: Session, name: str, port: int=443, protocol="vless", netw
 
 def update_inbound(db: Session, inbound_id: int, **kwargs):
     inbound = get_inbound(db, inbound_id)
+    if inbound is None:
+        return None
     for k, v in kwargs.items():
         setattr(inbound, k, v)
     db.commit()
@@ -26,6 +28,8 @@ def update_inbound(db: Session, inbound_id: int, **kwargs):
 
 def delete_inbound(db: Session, inbound_id: int):
     inbound = get_inbound(db, inbound_id)
+    if inbound is None:
+        return
     db.delete(inbound)
     db.commit()
 
