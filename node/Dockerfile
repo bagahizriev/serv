@@ -33,7 +33,7 @@ COPY requirements.txt /app/requirements.txt
 RUN python3 -m venv /app/venv \
     && /app/venv/bin/pip install --no-cache-dir -r /app/requirements.txt
 
-COPY xray_agent /app/xray_agent
+COPY --chown=xrayapi:xrayapi xray_agent /app/xray_agent
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
