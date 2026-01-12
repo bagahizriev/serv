@@ -1,4 +1,4 @@
-## Panel (API + PostgreSQL)
+## Panel (backend + frontend + PostgreSQL)
 
 Панель хранит:
 
@@ -17,7 +17,9 @@
 docker compose up --build
 ```
 
-API поднимется на `http://localhost:8000`.
+Backend API поднимется на `http://localhost:8000`.
+
+Frontend (Next.js) поднимется на `http://localhost:3000`.
 
 ### Примеры запросов
 

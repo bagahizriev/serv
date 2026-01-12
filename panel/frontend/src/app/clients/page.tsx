@@ -32,6 +32,9 @@ export default function ClientsPage() {
     const [editUsername, setEditUsername] = useState("");
     const [editLevel, setEditLevel] = useState("0");
 
+    const [clientUri, setClientUri] = useState<string>("");
+    const [uriLoading, setUriLoading] = useState(false);
+
     async function refresh() {
         setLoading(true);
         setErr("");
@@ -61,7 +64,31 @@ export default function ClientsPage() {
         if (!selected) return;
         setEditUsername(selected.username);
         setEditLevel(String(selected.level));
+        setClientUri("");
     }, [selected]);
+
+    async function loadClientUri() {
+        if (!selected) return;
+        setErr("");
+        setUriLoading(true);
+        try {
+            const resp = await apiFetch<{ uri: string }>(`/clients/${selected.id}/vless-uri`);
+            setClientUri(resp.uri);
+        } catch (e) {
+            setErr(e instanceof Error ? e.message : String(e));
+        } finally {
+            setUriLoading(false);
+        }
+    }
+
+    async function copyClientUri() {
+        if (!clientUri) return;
+        try {
+            await navigator.clipboard.writeText(clientUri);
+        } catch {
+            // ignore
+        }
+    }
 
     async function createClient() {
         setErr("");
@@ -184,6 +211,18 @@ export default function ClientsPage() {
                         <div className="space-y-3">
                             <div className="text-sm text-zinc-400">Client #{selected.id}</div>
                             <div className="rounded border border-zinc-800 bg-zinc-950 p-3 text-xs break-all">{selected.uuid}</div>
+
+                            <div className="flex items-center gap-2">
+                                <Button variant="ghost" onClick={loadClientUri} disabled={loading || uriLoading}>
+                                    {uriLoading ? "Loading..." : "VLESS URI"}
+                                </Button>
+                                <Button variant="ghost" onClick={copyClientUri} disabled={!clientUri}>
+                                    Copy
+                                </Button>
+                            </div>
+
+                            {clientUri ? <div className="rounded border border-zinc-800 bg-zinc-950 p-3 text-xs break-all">{clientUri}</div> : null}
+
                             <Input value={editUsername} onChange={setEditUsername} placeholder="username" />
                             <Input value={editLevel} onChange={setEditLevel} placeholder="level" />
                             <Button onClick={saveClient} disabled={loading || !editUsername}>

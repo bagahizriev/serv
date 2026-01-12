@@ -1,6 +1,7 @@
 import secrets
 import uuid as py_uuid
 from typing import List
+from urllib.parse import urlparse
 
 import httpx
 from cryptography.hazmat.primitives.asymmetric import x25519
@@ -62,9 +63,83 @@ def _b64url_nopad(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
 
 
+def _normalize_node_url(url: str) -> str:
+    u = (url or "").strip().rstrip("/")
+    if not u:
+        return u
+    if u.startswith("http://") or u.startswith("https://"):
+        return u
+    return f"http://{u}"
+
+
+def _node_host_from_url(node_url: str) -> str:
+    normalized = _normalize_node_url(node_url)
+    try:
+        p = urlparse(normalized)
+        if p.hostname:
+            return p.hostname
+    except Exception:
+        pass
+    return (normalized or "").replace("http://", "").replace("https://", "").split(":")[0]
+
+
+def _build_vless_uri(*, node_host: str, inbound: Inbound, client: Client) -> str:
+    base = f"vless://{client.uuid}@{node_host}:{inbound.port}"
+    params: list[str] = [f"type={inbound.network or 'tcp'}"]
+
+    sec = (inbound.security or "").lower()
+    if sec == "reality":
+        params.append("security=reality")
+        if inbound.sni:
+            params.append(f"sni={inbound.sni}")
+        if inbound.reality_fingerprint:
+            params.append(f"fp={inbound.reality_fingerprint}")
+        if inbound.reality_public_key:
+            params.append(f"pbk={inbound.reality_public_key}")
+        if inbound.reality_short_id:
+            params.append(f"sid={inbound.reality_short_id}")
+    else:
+        params.append("security=none")
+
+    tag = f"{client.username}"
+    return f"{base}?{'&'.join(params)}#{tag}"
+
+
+def _push_node(node_id: int, db: Session):
+    node = (
+        db.query(Node)
+        .options(joinedload(Node.inbounds).joinedload(Inbound.clients))
+        .filter(Node.id == node_id)
+        .first()
+    )
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+
+    config = build_node_config(node)
+    base = _normalize_node_url(node.url)
+    url = f"{base}/apply-config"
+    headers = {"X-Node-Key": node.node_key}
+
+    try:
+        with httpx.Client(timeout=15.0) as client:
+            r = client.post(url, json={"config": config}, headers=headers)
+        if r.status_code >= 400:
+            raise HTTPException(status_code=400, detail=f"Node error: {r.status_code} {r.text}")
+        return {
+            "status": "pushed",
+            "node_response": r.json()
+            if r.headers.get("content-type", "").startswith("application/json")
+            else r.text,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/nodes", response_model=NodeOut)
 def create_node(data: NodeCreate, db: Session = Depends(get_db)):
-    node = Node(name=data.name, url=data.url.rstrip("/"), node_key=data.node_key)
+    node = Node(name=data.name, url=_normalize_node_url(data.url), node_key=data.node_key)
     db.add(node)
     try:
         db.commit()
@@ -97,7 +172,7 @@ def update_node(node_id: int, data: NodeUpdate, db: Session = Depends(get_db)):
     if data.name is not None:
         node.name = data.name
     if data.url is not None:
-        node.url = data.url.rstrip("/")
+        node.url = _normalize_node_url(data.url)
     if data.node_key is not None:
         node.node_key = data.node_key
 
@@ -151,6 +226,8 @@ def create_inbound(data: InboundCreate, db: Session = Depends(get_db)):
         db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
     db.refresh(inbound)
+
+    _push_node(node_id=data.node_id, db=db)
     return inbound
 
 
@@ -199,6 +276,8 @@ def update_inbound(inbound_id: int, data: InboundUpdate, db: Session = Depends(g
         db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
     db.refresh(inbound)
+
+    _push_node(node_id=inbound.node_id, db=db)
     return inbound
 
 
@@ -207,8 +286,10 @@ def delete_inbound(inbound_id: int, db: Session = Depends(get_db)):
     inbound = db.query(Inbound).filter(Inbound.id == inbound_id).first()
     if not inbound:
         raise HTTPException(status_code=404, detail="Inbound not found")
+    node_id = inbound.node_id
     db.delete(inbound)
     db.commit()
+    _push_node(node_id=node_id, db=db)
     return {"status": "deleted"}
 
 
@@ -226,6 +307,8 @@ def create_client(data: ClientCreate, db: Session = Depends(get_db)):
         db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
     db.refresh(client)
+
+    _push_node(node_id=inbound.node_id, db=db)
     return client
 
 
@@ -251,6 +334,10 @@ def update_client(client_id: int, data: ClientUpdate, db: Session = Depends(get_
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
 
+    inbound = db.query(Inbound).filter(Inbound.id == client.inbound_id).first()
+    if not inbound:
+        raise HTTPException(status_code=404, detail="Inbound not found")
+
     if data.username is not None:
         client.username = data.username
     if data.level is not None:
@@ -262,6 +349,8 @@ def update_client(client_id: int, data: ClientUpdate, db: Session = Depends(get_
         db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
     db.refresh(client)
+
+    _push_node(node_id=inbound.node_id, db=db)
     return client
 
 
@@ -270,9 +359,33 @@ def delete_client(client_id: int, db: Session = Depends(get_db)):
     client = db.query(Client).filter(Client.id == client_id).first()
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
+    inbound = db.query(Inbound).filter(Inbound.id == client.inbound_id).first()
+    if not inbound:
+        raise HTTPException(status_code=404, detail="Inbound not found")
     db.delete(client)
     db.commit()
+
+    _push_node(node_id=inbound.node_id, db=db)
     return {"status": "deleted"}
+
+
+@app.get("/clients/{client_id}/vless-uri")
+def get_client_vless_uri(client_id: int, db: Session = Depends(get_db)):
+    client = db.query(Client).filter(Client.id == client_id).first()
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found")
+
+    inbound = db.query(Inbound).filter(Inbound.id == client.inbound_id).first()
+    if not inbound:
+        raise HTTPException(status_code=404, detail="Inbound not found")
+
+    node = db.query(Node).filter(Node.id == inbound.node_id).first()
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+
+    node_host = _node_host_from_url(node.url)
+    uri = _build_vless_uri(node_host=node_host, inbound=inbound, client=client)
+    return {"uri": uri}
 
 
 @app.get("/nodes/{node_id}/config")
@@ -294,32 +407,4 @@ def get_node_config(node_id: int, db: Session = Depends(get_db)):
 
 @app.post("/nodes/{node_id}/push")
 def push_node_config(node_id: int, db: Session = Depends(get_db)):
-    node = (
-        db.query(Node)
-        .options(joinedload(Node.inbounds).joinedload(Inbound.clients))
-        .filter(Node.id == node_id)
-        .first()
-    )
-    if not node:
-        raise HTTPException(status_code=404, detail="Node not found")
-
-    config = build_node_config(node)
-
-    url = f"{node.url}/apply-config"
-    headers = {"X-Node-Key": node.node_key}
-
-    try:
-        with httpx.Client(timeout=15.0) as client:
-            r = client.post(url, json={"config": config}, headers=headers)
-        if r.status_code >= 400:
-            raise HTTPException(status_code=400, detail=f"Node error: {r.status_code} {r.text}")
-        return {
-            "status": "pushed",
-            "node_response": r.json()
-            if r.headers.get("content-type", "").startswith("application/json")
-            else r.text,
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return _push_node(node_id=node_id, db=db)

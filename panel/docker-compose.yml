@@ -10,14 +10,23 @@ services:
         ports:
             - "5432:5432"
 
-    panel:
-        build: .
+    backend:
+        build: ./backend
         environment:
             DATABASE_URL: postgresql+psycopg2://xray_panel:xray_panel@db:5432/xray_panel
         depends_on:
             - db
         ports:
             - "8000:8000"
+
+    frontend:
+        build: ./frontend
+        environment:
+            PANEL_API_INTERNAL_URL: http://backend:8000
+        depends_on:
+            - backend
+        ports:
+            - "3000:3000"
 
 volumes:
     panel_db:
